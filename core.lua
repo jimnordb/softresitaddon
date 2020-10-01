@@ -1,4 +1,4 @@
-Softresit = LibStub("AceAddon-3.0"):NewAddon("Softresit", "AceEvent-3.0")
+Softresit = LibStub("AceAddon-3.0"):NewAddon("Softresit", "AceEvent-3.0", "AceHook-3.0")
 local AceGUI = LibStub("AceGUI-3.0")
 
 local defaults = {
@@ -10,7 +10,8 @@ local defaults = {
 	}
 }
 
-local opened = false
+opened = false
+debugEnabled = true
 frameIndex = 0
 frames = {}
 local raidFrameTooltip;
@@ -47,66 +48,43 @@ function Softresit:InitMinimapIcon()
 		}), self.db.factionrealm.minimapButton);
 end
 
-function Softresit:parseCSV(payload)
-	local softReserves = {}
-	local csv = {select(1,strsplit("\n",payload))}
-	local fmtMap = {}
-
-	for k,v in pairs({strsplit(",",csv[1])}) do fmtMap[v] = k end
-	for k,v in pairs(csv) do
-	    -- replace commas between quotation marks before splitting, may need to replace back
-	    local commaStrip = v:gsub('"([^,]*,[^,]*)"',function(s) return  s:gsub(",","#") end)
-	    local columns = {strsplit(",",commaStrip)}
-	    
-	    local itemId = tonumber(columns[fmtMap.ItemId])
-
-	    if itemId then
-	    	local _, link = GetItemInfo(itemId)
-	    	if link then 
-	    		local icon = GetItemIcon(itemId)
-		        local name = columns[fmtMap.Name]
-		        local class = columns[fmtMap.Class]
-		        local note = columns[fmtMap.Note]
-		        local from = columns[fmtMap.From]
-
-		        local color = select(4, GetClassColor(strupper(class)))
-		        local cName = name
-
-		        if color then
-		        	cName = "|c" .. strupper(color) .. name .. "|r"
-		        end
-
-		        tinsert(softReserves,{name=name, cName=cName, from=from, class=class, note=note, id=itemId, link=link, icon=icon})
-		    end
-	    end
-	end
-
-	return softReserves
-end
-
 function Softresit:GetRaiders() 
 	local raid = {}
 
-	 for i = 1, 40 do
-        local name, _, _ = GetRaidRosterInfo(i)
-        if name then
-            tinsert(raid, name)
-        end
-    end
+	if IsInRaid() then
+		for i = 1, 40 do
+			local name, _, _ = GetRaidRosterInfo(i)
+			if name then
+				tinsert(raid, name)
+			end
+		end
+	end
 
     return raid
 end
 
-function Softresit:getReservesItem(id, T)
+function Softresit:getReservesItem(id)
 	local reservers = {}
 
-	for k,v in pairs(T) do
+	for k,v in pairs(softReserves) do
 		if v.id == id then
 			tinsert(reservers, v)
 		end
 	end
 
 	return reservers
+end
+
+function Softresit:getReservesName(name)
+	local items = {}
+
+	for k,v in pairs(softReserves) do
+		if v.name == name then
+			tinsert(items, v)
+		end
+	end
+
+	return items
 end
 
 function Softresit:initRaidTooltip() 
@@ -198,6 +176,10 @@ function Softresit:CSVFrame(container)
 end
 
 function Softresit:RaidFrame(container)
+
+end
+
+function Softresit:SoftReservesFrame(container)
 	local itemIds = {}
 	local scrollcontainer = AceGUI:Create("SimpleGroup")
 	scrollcontainer:SetFullWidth(true)
@@ -235,7 +217,7 @@ function Softresit:RaidFrame(container)
 				end)
 				group:AddChild(itemlabel)
 
-				for k,v in pairs(Softresit:getReservesItem(v.id, softReserves)) do
+				for k,v in pairs(Softresit:getReservesItem(v.id)) do
 					local raider = AceGUI:Create("InteractiveLabel")
 
 					raider:SetText(v.cName)
@@ -255,6 +237,8 @@ local function SelectTab(container, event, group)
       Softresit:CSVFrame(container)
    elseif group == "raid" then
       Softresit:RaidFrame(container)
+   elseif group == "softreserves" then
+      Softresit:SoftReservesFrame(container)
    end
 end
 
@@ -272,7 +256,7 @@ function Softresit:OpenFrame(current)
 
 		local tab = AceGUI:Create("TabGroup")
 		tab:SetLayout("Flow")
-		tab:SetTabs({{text="CSV", value="csv"}, {text="Raid Overview", value="raid"}})
+		tab:SetTabs({{text="CSV", value="csv"}, {text="Raid Overview", value="raid"}, {text="Soft-reserves", value="softreserves"}})
 		tab:SetCallback("OnGroupSelected", SelectTab)
 		tab:SelectTab(current)
 		frame:AddChild(tab)
@@ -286,8 +270,49 @@ function Softresit:loadReserves()
 	softReserves = Softresit:parseCSV(self.db.factionrealm.csv)
 end
 
+function Softresit:OnTooltipSetItem(tooltip)
+	if tooltip:GetItem() ~= nil then
+		local _, itemlink = tooltip:GetItem();
+		if itemlink ~= nil then
+			local id = Softresit:getIdFromLink(itemlink)
+			local reservers = Softresit:getReservesItem(id)
+
+			if #(reservers) > 0 then
+				local t = {}
+				for k,v in pairs(reservers) do
+					tinsert(t, v.cName)
+				end
+
+				tooltip:AddLine("Softreservers: " .. table.concat(t, ", "), 1, 1, 1, true)
+			end
+		end
+	end
+end
+
+function Softresit:OnTooltipSetUnit(tooltip)
+	if tooltip:GetUnit() ~= nil then
+		local name, server = tooltip:GetUnit();
+
+		if UnitIsPlayer(name) and IsInRaid(name) and (InCombatLockdown() == false) then
+			local items = Softresit:getReservesName(name)
+
+			if #(items) > 0 then
+				tooltip:AddLine("Soft-reserves", 1, 1, 1, true)
+
+				for k,v in pairs(items) do
+					tooltip:AddLine(v.link, 1, 1, 1, true);
+				end
+			end
+		end
+	end
+end
+
 function Softresit:OnInitialize() 
 	self.db = LibStub("AceDB-3.0"):New("SRIDB", defaults)
 	Softresit:InitMinimapIcon()
 	Softresit:loadReserves()
+	Softresit:HookScript(GameTooltip, "OnTooltipSetItem")
+	Softresit:HookScript(GameTooltip, "OnTooltipSetUnit")
+	Softresit:RegisterEvent("LOOT_OPENED")
+	Softresit:RegisterEvent("START_LOOT_ROLL")
 end
