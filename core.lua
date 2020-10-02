@@ -1,4 +1,4 @@
-Softresit = LibStub("AceAddon-3.0"):NewAddon("Softresit", "AceEvent-3.0", "AceHook-3.0")
+Softresit = LibStub("AceAddon-3.0"):NewAddon("Softresit", "AceEvent-3.0", "AceHook-3.0","AceComm-3.0")
 local AceGUI = LibStub("AceGUI-3.0")
 
 local defaults = {
@@ -10,14 +10,29 @@ local defaults = {
 	}
 }
 
+
 opened = false
 debugEnabled = true
+Softresit.debug = true
+
 frameIndex = 0
 frames = {}
 local raidFrameTooltip;
 
+--define print fn in my addon so it is easy to turn ViragDevTool off 
+local function vdt_log(strName, tData)
+	if ViragDevTool_AddData and Softresit.debug then 
+		ViragDevTool_AddData(tData, "Softresit: " .. strName) 
+	end 
+end
+
 softReserves = {}
 raidRoster = {}
+
+-- Communication	
+local PREFIX 	= "SRIT"
+local REQUEST 	= PREFIX .. "REQ"	-- to master looter, if any, or raid leader
+local CSV 		= PREFIX .. "CSV" -- broadcast csv to whoever wants to listen
 
 function Softresit:InitMinimapIcon()
 	LibStub("LibDBIcon-1.0"):Register("Softresit", LibStub("LibDataBroker-1.1"):NewDataObject("Softresit",
@@ -102,13 +117,16 @@ function Softresit:CSVFrame(container)
 	local editButton = AceGUI:Create("Button")
 	local csvEditBox = AceGUI:Create("MultiLineEditBox")
 	local resetButton = AceGUI:Create("Button")
+	local synchGroup = AceGUI:Create("InlineGroup")
 	
 	editButton:SetCallback("OnClick", function()
 		if editMode then
 			if changed then
 				self.db.factionrealm.csv = csvEditBox:GetText()
-
+				self.db.factionrealm.csvSource = "Edited by you | " .. date("%m/%d/%y %H:%M:%S")
+				self:UpdateCsvSourceText()
 				Softresit:loadReserves()
+				
 
 		    	editMode = false
 		    	editButton:SetText("Edit CSV")
@@ -162,6 +180,8 @@ function Softresit:CSVFrame(container)
 	resetButton:SetCallback("OnClick", function()
 		csvEditBox:SetText("")
 		self.db.factionrealm.csv = ""
+		self.db.factionrealm.csvSource = "Edited by you | " .. date("%m/%d/%y %H:%M:%S")
+		self:UpdateCsvSourceText()
 		softReserves = {}
 		resetButton:SetDisabled(true)
 		editButton:SetDisabled(true)
@@ -173,6 +193,44 @@ function Softresit:CSVFrame(container)
 	resetButton:SetText("Reset CSV")
 	resetButton:SetRelativeWidth(0.5)
 	container:AddChild(resetButton)
+	
+	local broadcastBtn = AceGUI:Create("Button")
+	broadcastBtn:SetCallback("OnClick",function() 
+		if self:AddonChannel() then 
+			self:SendCommMessage(CSV,self.db.factionrealm.csv,self:AddonChannel(),"BULK")
+		elseif self.debug then
+			self:SendCommMessage(CSV,self.db.factionrealm.csv,"WHISPER",UnitName("player"),"BULK")
+		end
+	end)
+	broadcastBtn:SetText("Share")
+	broadcastBtn:SetRelativeWidth(1)
+
+	local csvSourceText = AceGUI:Create("Label")
+	csvSourceText:SetText("Source: " .. self.db.factionrealm.csvSource)	
+	csvSourceText:SetRelativeWidth(1)
+	-- kind of awkward way to update from other functions, would like some sort of render method with an update state thing maybe
+	self.UpdateCsvSourceText = function(self) 
+		csvSourceText:SetText(self.db.factionrealm.csvSource)
+	end
+	--self.UpdateCsvSourceText()
+
+	local requestBtn = AceGUI:Create("Button")
+	requestBtn:SetCallback("OnClick",function()
+		local target = self:GetGroupLeader()
+		if not target and self.debug then target = UnitName("player") end
+		if target then self:SendCommMessage(REQUEST,"-","WHISPER",target) end
+	end)
+	requestBtn:SetText("Request")
+	requestBtn:SetRelativeWidth(1)
+
+	synchGroup:SetTitle("CSV Sharing")
+	synchGroup:SetRelativeWidth(0.4)
+	synchGroup:SetLayout("Flow")
+	synchGroup:AddChild(broadcastBtn)
+	synchGroup:AddChild(requestBtn)
+	synchGroup:AddChild(csvSourceText)
+
+	container:AddChild(synchGroup)
 end
 
 function Softresit:RaidFrame(container)
@@ -307,6 +365,30 @@ function Softresit:OnTooltipSetUnit(tooltip)
 	end
 end
 
+function Softresit:OnCommReceived(...)
+	vdt_log("received stray addon message",{...})
+end
+
+function Softresit:Comm_Request(prefix,msg,channel,source)
+	if self.debug or UnitInParty(source) or UnitInRaid(source) then 
+		self:SendCommMessage(CSV,self.db.factionrealm.csv,"WHISPER",source,"BULK")
+		vdt_log("recv csv request from ".. source .. " over " .. channel, {msg = msg, reserves = self:parseCSV(msg)})
+	end
+end
+
+function Softresit:Comm_CSV(prefix,msg,channel,source)
+	if self:UnitIsValidSource(source) then
+		self.db.factionrealm.csv = msg
+		self.db.factionrealm.csvSource = string.format("%s | %s",
+			source,
+			date("%m/%d/%y %H:%M:%S")
+		)
+		self:UpdateCsvSourceText()
+		Softresit:loadReserves()
+		vdt_log("received csv from "..source.." over "..channel,{msg = msg, reserves = self:parseCSV(msg)})
+	end
+end
+
 function Softresit:OnInitialize() 
 	self.db = LibStub("AceDB-3.0"):New("SRIDB", defaults)
 	Softresit:InitMinimapIcon()
@@ -315,4 +397,6 @@ function Softresit:OnInitialize()
 	Softresit:HookScript(GameTooltip, "OnTooltipSetUnit")
 	Softresit:RegisterEvent("LOOT_OPENED")
 	Softresit:RegisterEvent("START_LOOT_ROLL")
+	self:RegisterComm(REQUEST,"Comm_Request")
+	self:RegisterComm(CSV,"Comm_CSV")
 end
