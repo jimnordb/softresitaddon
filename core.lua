@@ -7,7 +7,8 @@ local defaults = {
 			hide = false
 		},
 		csv = "",
-		softReserves = {}
+		softReserves = {},
+		itemQueue = {},
 	}
 }
 
@@ -106,65 +107,70 @@ function Softresit:resetReserves()
 	self.db.factionrealm.softReserves = {}
 end
 
--- TODO
--- probably will want a db entry with a queue of items to process, combination of in current corpse/bag maybe?
--- make item label function to avoid duplication, maybe player label too
--- figure out how to resize the scroll list once items are dismissed, maybe need to manually from children
-function Softresit:LootFrame(itemId)
-	local group = AceGUI:Create("SimpleGroup")
-	group:SetFullWidth(true)
-
-	local itemlabel = AceGUI:Create("InteractiveLabel")
+function Softresit:ItemLabel(itemId)
+	local itemLabel = AceGUI:Create("InteractiveLabel")
 	local _,link,_,_,_,_,_,_,_,icon = GetItemInfo(itemId)
-	itemlabel:SetText(link);
-	itemlabel:SetImage(icon);
-	itemlabel:SetImageSize(16,16)
-	itemlabel:SetCallback("OnEnter", function(widget, arg1, arg2)
+	itemLabel:SetText(link);
+	itemLabel:SetImage(icon);
+	itemLabel:SetImageSize(16,16)
+	itemLabel:SetCallback("OnEnter", function(widget, arg1, arg2)
 		GameTooltip:SetOwner(widget.frame, "ANCHOR_TOPRIGHT")
 		GameTooltip:SetHyperlink(link);
 		GameTooltip:Show();
 	end)
-	itemlabel:SetCallback("OnLeave", function(widget, arg1, arg2)
+	itemLabel:SetCallback("OnLeave", function(widget, arg1, arg2)
 		GameTooltip:SetOwner(UIParent, "ANCHOR_TOPRIGHT")
 		GameTooltip:Hide();
 	end)
+	return itemLabel
+end
+
+-- TODO
+-- make item label function to avoid duplication, maybe player label too
+-- figure out how to resize the scroll list once items are dismissed, maybe need to manually from children
+function Softresit:AnnounceItem(itemId) print("announcing",(GetItemInfo(itemId)))end
+
+function Softresit:LootFrame(itemId)
+	local group = AceGUI:Create("SimpleGroup")
+	group:SetFullWidth(true)
+
+	local itemlabel = self:ItemLabel(itemId)
 	itemlabel:SetRelativeWidth(0.5);
-	--itemlabel:SetWidth(200)
 
 	local announceBtn = AceGUI:Create("Button")
 	announceBtn:SetText("Announce")
 	announceBtn:SetCallback("OnClick", function()
-		print("announce",link)
+		self:AnnounceItem(itemId)
 	end)
 	announceBtn:SetRelativeWidth(0.25)
-	--announceBtn:SetWidth(120)
 
 	local dismissBtn = AceGUI:Create("Button")
 	dismissBtn:SetText("Dismiss")
 	dismissBtn:SetCallback("OnClick", function()
-		print("dismiss",link)
-		group:Release()
+		local tbl = self.db.factionrealm.itemQueue
+		tbl[itemId] = tbl[itemId] - 1
+		self:SetDB("itemQueue",tbl)
 	end)
 	dismissBtn:SetRelativeWidth(0.25)
-	--dismissBtn:SetWidth(120)
 
 	group:SetLayout("Flow")
 	group:AddChild(itemlabel)
 	group:AddChild(announceBtn)
 	group:AddChild(dismissBtn)
 
-	for i=1,5 do
-		for _,raider in pairs(Softresit:getReservesItem(itemId)) do
+	for _,raider in pairs(Softresit:getReservesItem(itemId)) do
 			local label = AceGUI:Create("InteractiveLabel")
 			label:SetText(raider.cName)
 			label:SetWidth(80)
 			group:AddChild(label)
-		end
 	end
+
+	local spacer = AceGUI:Create("Heading")
+	spacer:SetFullWidth(true)
+	group:AddChild(spacer)
 
 	return group
 end
-
 
 function Softresit:LootWindow()
 	local window = AceGUI:Create("Window")
@@ -182,18 +188,17 @@ function Softresit:LootWindow()
 	local scrollFrame = AceGUI:Create("ScrollFrame")
 	scrollFrame:SetLayout("Flow")
 	scrollContainer:AddChild(scrollFrame)
-	
-	local testItems = {19387,19398,19406,19363,16950,19360,19360,19360,19360,19360,19360}
-	for _,itemId in pairs(testItems) do
-		local frame = Softresit:LootFrame(itemId)
-		scrollFrame:AddChild(frame)
-		frame:SetCallback("OnRelease",function()
-			scrollFrame:DoLayout()
-			scrollFrame:FixScroll()
-			vdt_log("loot window scrollframe",scrollFrame)
-			print("do layout")
-		end)
+
+	local function populate()
+		scrollFrame:ReleaseChildren() -- clear and repopulate seems to be the only way of doing this
+		for itemId,amount in pairs(self.db.factionrealm.itemQueue) do
+			if amount > 0 then
+				scrollFrame:AddChild(Softresit:LootFrame(itemId))
+			end
+		end
 	end
+	self:OnDB(scrollFrame,"itemQueue",populate)
+	populate()
 end
 
 
@@ -465,4 +470,32 @@ function Softresit:OnInitialize()
 	Softresit:RegisterEvent("START_LOOT_ROLL")
 	self:RegisterComm("SRITREQ","Comm_Request")
 	self:RegisterComm("SRITCSV","Comm_CSV")
+
+	local testItems = {19387,19398,19406,19363,16950,19360,19381,19002}
+	Softresit.db.factionrealm.itemQueue = {}
+	for _,v in pairs(testItems) do Softresit.db.factionrealm.itemQueue[v] = 1 end
+
+	self:LootWindow()
+end
+
+
+local dbListeners = {}
+
+function Softresit:OnDB(widget,field,func)
+	if not dbListeners[field] then dbListeners[field] = {} end
+	dbListeners[field][widget] = func
+	-- if setcallback overwrites previous, will require a rewrite
+	vdt_log(dbListeners)
+	widget:SetCallback("OnRelease",function() dbListeners[field][widget] = nil end)
+end
+
+function Softresit:SetDB(field,value)
+	self.db.factionrealm[field] = value
+	if dbListeners[field] then
+		for _,func in pairs(dbListeners[field]) do
+			if func then
+				func(value)
+			end
+		end
+	end
 end
