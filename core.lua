@@ -485,7 +485,7 @@ function Softresit:OnDB(widget,field,func)
 	if not dbListeners[field] then dbListeners[field] = {} end
 	dbListeners[field][widget] = func
 	-- if setcallback overwrites previous, will require a rewrite
-	vdt_log(dbListeners)
+	vdt_log("dbListeners",dbListeners)
 	widget:SetCallback("OnRelease",function() dbListeners[field][widget] = nil end)
 end
 
