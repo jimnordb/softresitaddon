@@ -3,11 +3,12 @@ local AceGUI = LibStub("AceGUI-3.0")
 
 local defaults = {
 	factionrealm = {
-		minimapButton = { 
-			hide = false 
+		minimapButton = {
+			hide = false
 		},
 		csv = "",
-		softReserves = {}
+		softReserves = {},
+		itemQueue = {},
 	}
 }
 
@@ -18,11 +19,11 @@ Softresit.debug = true
 Softresit.frameIndex = 0
 Softresit.frames = {}
 
---define print fn in my addon so it is easy to turn ViragDevTool off 
+--define print fn in my addon so it is easy to turn ViragDevTool off
 local function vdt_log(strName, tData)
-	if ViragDevTool_AddData and Softresit.debug then 
-		ViragDevTool_AddData(tData, "Softresit: " .. strName) 
-	end 
+	if ViragDevTool_AddData and Softresit.debug then
+		ViragDevTool_AddData(tData, "Softresit: " .. strName)
+	end
 end
 
 function Softresit:InitMinimapIcon()
@@ -35,7 +36,7 @@ function Softresit:InitMinimapIcon()
 				if (button == "LeftButton") then
 					Softresit:OpenFrame("csv")
 				end
-				
+
 				if (button == "MiddleButton") then
 					Softresit:OpenOptions()
 				end
@@ -54,7 +55,7 @@ function Softresit:InitMinimapIcon()
 		}), self.db.factionrealm.minimapButton);
 end
 
-function Softresit:GetRaiders() 
+function Softresit:GetRaiders()
 	local raid = {}
 
 	if IsInRaid() then
@@ -93,7 +94,7 @@ function Softresit:getReservesName(name)
 	return items
 end
 
-function Softresit:initRaidTooltip() 
+function Softresit:initRaidTooltip()
 	raidFrameTooltip = CreateFrame( "GameTooltip", "RaidOverviewFrameTooltip", nil, "GameTooltipTemplate" ); -- Tooltip name cannot be nil
 	raidFrameTooltip:SetOwner( UIParent, "ANCHOR_NONE" );
 end
@@ -106,13 +107,108 @@ function Softresit:resetReserves()
 	self.db.factionrealm.softReserves = {}
 end
 
+function Softresit:ItemLabel(itemId)
+	local itemLabel = AceGUI:Create("InteractiveLabel")
+	local _,link,_,_,_,_,_,_,_,icon = GetItemInfo(itemId)
+	itemLabel:SetText(link);
+	itemLabel:SetImage(icon);
+	itemLabel:SetImageSize(16,16)
+	itemLabel:SetCallback("OnEnter", function(widget, arg1, arg2)
+		GameTooltip:SetOwner(widget.frame, "ANCHOR_TOPRIGHT")
+		GameTooltip:SetHyperlink(link);
+		GameTooltip:Show();
+	end)
+	itemLabel:SetCallback("OnLeave", function(widget, arg1, arg2)
+		GameTooltip:SetOwner(UIParent, "ANCHOR_TOPRIGHT")
+		GameTooltip:Hide();
+	end)
+	return itemLabel
+end
+
+-- TODO
+-- make item label function to avoid duplication, maybe player label too
+-- figure out how to resize the scroll list once items are dismissed, maybe need to manually from children
+function Softresit:AnnounceItem(itemId) print("announcing",(GetItemInfo(itemId)))end
+
+function Softresit:LootFrame(itemId)
+	local group = AceGUI:Create("SimpleGroup")
+	group:SetFullWidth(true)
+
+	local itemlabel = self:ItemLabel(itemId)
+	itemlabel:SetRelativeWidth(0.5);
+
+	local announceBtn = AceGUI:Create("Button")
+	announceBtn:SetText("Announce")
+	announceBtn:SetCallback("OnClick", function()
+		self:AnnounceItem(itemId)
+	end)
+	announceBtn:SetRelativeWidth(0.25)
+
+	local dismissBtn = AceGUI:Create("Button")
+	dismissBtn:SetText("Dismiss")
+	dismissBtn:SetCallback("OnClick", function()
+		local tbl = self.db.factionrealm.itemQueue
+		tbl[itemId] = tbl[itemId] - 1
+		self:SetDB("itemQueue",tbl)
+	end)
+	dismissBtn:SetRelativeWidth(0.25)
+
+	group:SetLayout("Flow")
+	group:AddChild(itemlabel)
+	group:AddChild(announceBtn)
+	group:AddChild(dismissBtn)
+
+	for _,raider in pairs(Softresit:getReservesItem(itemId)) do
+			local label = AceGUI:Create("InteractiveLabel")
+			label:SetText(raider.cName)
+			label:SetWidth(80)
+			group:AddChild(label)
+	end
+
+	local spacer = AceGUI:Create("Heading")
+	spacer:SetFullWidth(true)
+	group:AddChild(spacer)
+
+	return group
+end
+
+function Softresit:LootWindow()
+	local window = AceGUI:Create("Window")
+	window:SetTitle("Loot")
+	window:SetLayout("Fill")
+	window:SetWidth(500)
+
+	local scrollContainer = AceGUI:Create("SimpleGroup")
+	scrollContainer:SetFullWidth(true)
+	scrollContainer:SetFullHeight(true)
+	scrollContainer:SetLayout("Fill")
+
+	window:AddChild(scrollContainer)
+
+	local scrollFrame = AceGUI:Create("ScrollFrame")
+	scrollFrame:SetLayout("Flow")
+	scrollContainer:AddChild(scrollFrame)
+
+	local function populate()
+		scrollFrame:ReleaseChildren() -- clear and repopulate seems to be the only way of doing this
+		for itemId,amount in pairs(self.db.factionrealm.itemQueue) do
+			if amount > 0 then
+				scrollFrame:AddChild(Softresit:LootFrame(itemId))
+			end
+		end
+	end
+	self:OnDB(scrollFrame,"itemQueue",populate)
+	populate()
+end
+
+
 function Softresit:CSVFrame(container)
 	local editMode = false
 	local editButton = AceGUI:Create("Button")
 	local csvEditBox = AceGUI:Create("MultiLineEditBox")
 	local resetButton = AceGUI:Create("Button")
 	local synchGroup = AceGUI:Create("InlineGroup")
-	
+
 	editButton:SetCallback("OnClick", function()
 		if editMode then
 			self.db.factionrealm.csv = csvEditBox:GetText()
@@ -123,7 +219,7 @@ function Softresit:CSVFrame(container)
 	    	editMode = false
 	    	editButton:SetText("Edit CSV")
 			csvEditBox:SetDisabled(true)
-	    else 
+	    else
 	    	csvEditBox:SetDisabled(false)
 	    	csvEditBox:SetFocus()
 			editButton:SetText("Save")
@@ -172,10 +268,10 @@ function Softresit:CSVFrame(container)
 	resetButton:SetText("Reset CSV")
 	resetButton:SetRelativeWidth(0.5)
 	container:AddChild(resetButton)
-	
+
 	local broadcastBtn = AceGUI:Create("Button")
-	broadcastBtn:SetCallback("OnClick",function() 
-		if self:AddonChannel() then 
+	broadcastBtn:SetCallback("OnClick",function()
+		if self:AddonChannel() then
 			self:SendCommMessage("SRITCSV", self.db.factionrealm.csv, self:AddonChannel(), "BULK")
 		elseif self.debug then
 			self:SendCommMessage("SRITCSV", self.db.factionrealm.csv, "WHISPER", UnitName("player"), "BULK")
@@ -185,10 +281,10 @@ function Softresit:CSVFrame(container)
 	broadcastBtn:SetRelativeWidth(1)
 
 	local csvSourceText = AceGUI:Create("Label")
-	csvSourceText:SetText("Source: " .. self.db.factionrealm.csvSource)	
+	csvSourceText:SetText("Source: " .. self.db.factionrealm.csvSource)
 	csvSourceText:SetRelativeWidth(1)
 	-- kind of awkward way to update from other functions, would like some sort of render method with an update state thing maybe
-	self.UpdateCsvSourceText = function() 
+	self.UpdateCsvSourceText = function()
 		csvSourceText:SetText(self.db.factionrealm.csvSource)
 	end
 	--self.UpdateCsvSourceText()
@@ -226,6 +322,8 @@ function Softresit:SoftReservesFrame(container)
 
 	local scroll = AceGUI:Create("ScrollFrame")
 	scroll:SetLayout("Flow")
+
+	vdt_log("soft reserves",Softresit:getReserves())
 
 	for k,v in pairs(Softresit:getReserves()) do
 		if not tContains(itemIds, v.id) then
@@ -280,12 +378,12 @@ local function SelectTab(container, event, group)
 end
 
 function Softresit:OpenFrame(current)
-	if Softresit.opened == false then 
+	if Softresit.opened == false then
 		Softresit.opened = true
 		local frame = AceGUI:Create("Window")
 		frame:SetTitle("Softres.it")
 		frame:SetStatusText("")
-		frame:SetCallback("OnClose", function(widget) 
+		frame:SetCallback("OnClose", function(widget)
 			AceGUI:Release(widget)
 			Softresit.opened = false
 		end)
@@ -345,7 +443,7 @@ function Softresit:OnCommReceived(...)
 end
 
 function Softresit:Comm_Request(prefix,msg,channel,source)
-	if self.debug or UnitInParty(source) or UnitInRaid(source) then 
+	if self.debug or UnitInParty(source) or UnitInRaid(source) then
 		self:SendCommMessage("SRITCSV", self.db.factionrealm.csv, "WHISPER", source, "BULK")
 		vdt_log("recv csv request from ".. source .. " over " .. channel, {msg = msg, reserves = self:parseCSV(msg)})
 	end
@@ -363,7 +461,7 @@ function Softresit:Comm_CSV(prefix,msg,channel,source)
 	end
 end
 
-function Softresit:OnInitialize() 
+function Softresit:OnInitialize()
 	self.db = LibStub("AceDB-3.0"):New("SRIDB", defaults)
 	Softresit:InitMinimapIcon()
 	Softresit:HookScript(GameTooltip, "OnTooltipSetItem")
@@ -372,4 +470,32 @@ function Softresit:OnInitialize()
 	Softresit:RegisterEvent("START_LOOT_ROLL")
 	self:RegisterComm("SRITREQ","Comm_Request")
 	self:RegisterComm("SRITCSV","Comm_CSV")
+
+	local testItems = {19387,19398,19406,19363,16950,19360,19381,19002}
+	Softresit.db.factionrealm.itemQueue = {}
+	for _,v in pairs(testItems) do Softresit.db.factionrealm.itemQueue[v] = 1 end
+
+	self:LootWindow()
+end
+
+
+local dbListeners = {}
+
+function Softresit:OnDB(widget,field,func)
+	if not dbListeners[field] then dbListeners[field] = {} end
+	dbListeners[field][widget] = func
+	-- if setcallback overwrites previous, will require a rewrite
+	vdt_log("dbListeners",dbListeners)
+	widget:SetCallback("OnRelease",function() dbListeners[field][widget] = nil end)
+end
+
+function Softresit:SetDB(field,value)
+	self.db.factionrealm[field] = value
+	if dbListeners[field] then
+		for _,func in pairs(dbListeners[field]) do
+			if func then
+				func(value)
+			end
+		end
+	end
 end
