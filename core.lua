@@ -128,28 +128,50 @@ end
 -- TODO
 -- make item label function to avoid duplication, maybe player label too
 -- figure out how to resize the scroll list once items are dismissed, maybe need to manually from children
-function Softresit:AnnounceItem(itemId) print("announcing",(GetItemInfo(itemId)))end
+function Softresit:AnnounceItem(itemId) 
+	print("announcing",(GetItemInfo(itemId)))
+end
 
 function Softresit:LootFrame(itemId)
 	local group = AceGUI:Create("SimpleGroup")
 	group:SetFullWidth(true)
 
 	local itemlabel = self:ItemLabel(itemId)
-	itemlabel:SetRelativeWidth(0.5);
+	itemlabel:SetRelativeWidth(0.5)
 
-	local announceBtn = AceGUI:Create("Button")
-	announceBtn:SetText("Announce")
+	local announceBtn = AceGUI:Create("Icon")
+	announceBtn:SetLabel("Announce")
+	announceBtn:SetImage("interface/buttons/ui-grouploot-dice-up")
+	announceBtn:SetImageSize(16,16)
 	announceBtn:SetCallback("OnClick", function()
 		self:AnnounceItem(itemId)
 	end)
+	announceBtn:SetCallback("OnEnter", function()
+		announceBtn:SetImage("interface/buttons/ui-grouploot-dice-highlight")
+		announceBtn:SetLabel("|cFFFFF569Announce|r")
+	end)
+	announceBtn:SetCallback("OnLeave", function()
+		announceBtn:SetImage("interface/buttons/ui-grouploot-dice-up")
+		announceBtn:SetLabel("|cFFFFFFFFAnnounce|r")
+	end)
 	announceBtn:SetRelativeWidth(0.25)
 
-	local dismissBtn = AceGUI:Create("Button")
-	dismissBtn:SetText("Dismiss")
+	local dismissBtn = AceGUI:Create("Icon")
+	dismissBtn:SetLabel("Dismiss")
+	dismissBtn:SetImage("interface/buttons/ui-grouploot-pass-up")
+	dismissBtn:SetImageSize(16,16)
 	dismissBtn:SetCallback("OnClick", function()
 		local tbl = self.db.factionrealm.itemQueue
 		tbl[itemId] = tbl[itemId] - 1
 		self:SetDB("itemQueue",tbl)
+	end)
+	dismissBtn:SetCallback("OnEnter", function()
+		dismissBtn:SetImage("interface/buttons/ui-grouploot-pass-down")
+		dismissBtn:SetLabel("|cFFFFF569Dismiss|r")
+	end)
+	dismissBtn:SetCallback("OnLeave", function()
+		dismissBtn:SetImage("interface/buttons/ui-grouploot-pass-up")
+		dismissBtn:SetLabel("|cFFFFFFFFDismiss|r")
 	end)
 	dismissBtn:SetRelativeWidth(0.25)
 
@@ -158,11 +180,18 @@ function Softresit:LootFrame(itemId)
 	group:AddChild(announceBtn)
 	group:AddChild(dismissBtn)
 
-	for _,raider in pairs(Softresit:getReservesItem(itemId)) do
-			local label = AceGUI:Create("InteractiveLabel")
-			label:SetText(raider.cName)
-			label:SetWidth(80)
-			group:AddChild(label)
+	local reservers = Softresit:getReservesItem(itemId)
+
+	if #(reservers) > 0 then
+		local t = {}
+		for k,v in pairs(reservers) do
+			tinsert(t, v.cName)
+		end
+
+		local label = AceGUI:Create("Label")
+		label:SetText("Softreservers: " .. table.concat(t, ", "))
+		label:SetFullWidth(true)
+		group:AddChild(label)
 	end
 
 	local spacer = AceGUI:Create("Heading")
